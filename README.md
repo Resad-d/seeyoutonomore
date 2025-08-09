@@ -1,5 +1,5 @@
 # seeyoutonomore
-My first (small) game I made in pure Javascript. Goal is surviving till music ends (5 mintues).
+My first (small) game I made in pure JavaScript. Goal is surviving till music ends (5 mintues).
 
 # My Game
 
