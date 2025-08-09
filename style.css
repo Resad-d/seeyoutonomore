@@ -1,0 +1,160 @@
+body,
+html {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: #00000057 !important;
+
+  color: white !important;
+  font-family: Arial, sans-serif;
+  position: relative;
+  height: 100vh;
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+}
+
+/* Background with image and overlay */
+#background {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-image: url('see_you_to_no_more.jpg');
+  background-color: #000000 !important;
+  background-size: 20%;
+  background-position: center;
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+  z-index: 1;
+}
+
+#background::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: black;
+  opacity: var(--overlay-opacity, 0.7);
+  z-index: 2;
+  pointer-events: none;
+}
+
+#background.no-after::after {
+  opacity: 0 !important;
+}
+
+/* Canvas */
+canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 3;
+  /* Keeps canvas above the overlay */
+}
+
+/* Menu */
+#menu {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  z-index: 4;
+}
+
+/* HUD */
+#hud {
+  position: fixed;
+  display: none;
+  width: 100%;
+  z-index: 5;
+}
+
+.progress-container {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+}
+
+#scoreboard {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+}
+
+.energy-container {
+  position: fixed;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 300px;
+  height: 15px;
+  background: gray;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.energy-bar {
+  height: 100%;
+  background: cyan;
+  width: 100%;
+}
+
+#particleCanvas {
+  display: block;
+}
+
+.progress {
+  height: 20px;
+  width: 400px;
+}
+
+#progressBar {
+  width: 0%;
+}
+
+#endMessage {
+  display: none;
+  text-align: center;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 2rem;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 20px;
+  border-radius: 10px;
+  z-index: 6;
+}
+
+#restartBtn {
+  margin-top: 10px;
+  display: none;
+}
+
+.endScreen {
+  display: flex;
+  gap: 40px;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 20px;
+}
+
+#result {
+  flex: 1;
+  color: red;
+}
+
+.source {
+  left: 20px;
+  bottom: 20px;
+  z-index: 7;
+}
