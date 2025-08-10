@@ -46,6 +46,7 @@ opening the HTML file directly with `file://` will cause a **CORS error**.
 - HTML5
 - CSS3
 - JavaScript
+- Bootstrap 5
 
 ---
 
