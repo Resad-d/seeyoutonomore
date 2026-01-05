@@ -14,7 +14,7 @@ let paused = false;
 let wasPausedByBlur = false;
 let mouseDown = false;
 let particleRadiusScale = 1; // default radius multiplier
-let regenDelay, offsetX, offsetY;
+let regenDelay, offsetX, offsetY, musicEnded;
 let upgrades = { particles: 5, speed: 1, regen: 1 };
 let energy = 5;
 let maxEnergy = 10;
@@ -24,6 +24,7 @@ let player = { x: canvas.width / 2, y: canvas.height / 2 };
 let mouse = { x: canvas.width / 2, y: canvas.height / 2 };
 
 let musicDuration = 307;
+const DEFAULT_VOLUME = 0.1;
 // ====== ENEMY COLORS ======
 const ENEMY_COLORS = {
     homing: "red",
@@ -36,15 +37,16 @@ const ENEMY_COLORS = {
     splitter: "crimson"
 };
 let elapsedTime = 0;
+let timeScale = 2; // bump >1 to globally speed up gameplay pacing
 
 let spawnedWaves = new Set();
 
 // ====== LEVEL DESIGN ======
 import { waveSchedule } from "./level_design.js"
 
-document.addEventListener('DOMContentLoaded', function () {
-    preloadMusic("see you tonomore.mp3");
-    musicGainNode.gain.value = parseFloat(volumeSlider.value);
+document.addEventListener('DOMContentLoaded', async function () {
+    if (!volumeSlider.value) volumeSlider.value = DEFAULT_VOLUME;
+    await ensureMusicReady();
 })
 
 
@@ -177,11 +179,28 @@ async function preloadMusic(url) {
     const arrayBuffer = await response.arrayBuffer();
     musicBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
+    musicGainNode.gain.value = parseFloat(volumeSlider?.value || DEFAULT_VOLUME);
     musicDuration = musicBuffer.duration;
+}
+async function ensureMusicReady() {
+    if (!audioContext) {
+        await preloadMusic("see you tonomore.mp3");
+    }
+    if (!musicBuffer) {
+        await preloadMusic("see you tonomore.mp3");
+    }
+    if (audioContext?.state === "suspended") {
+        try { await audioContext.resume(); } catch (err) { console.warn("AudioContext resume failed", err); }
+    }
+    setMusicVolume(volumeSlider?.value || DEFAULT_VOLUME);
 }
 
 function playMusic() {
-    if (!musicBuffer) return;
+    if (!musicBuffer || !audioContext) return;
+
+    if (musicSource) {
+        try { musicSource.stop(); } catch { /* ignore */ }
+    }
 
     musicSource = audioContext.createBufferSource();
     musicSource.buffer = musicBuffer;
@@ -190,6 +209,7 @@ function playMusic() {
     musicStartTime = audioContext.currentTime - musicPausedTime;
 
     musicSource.onended = () => {
+        musicEnded = true;
         if (!gameOver && !isPaused) {
             endGame(true);
         }
@@ -214,7 +234,11 @@ function resumeMusic() {
 
 function setMusicVolume(value) {
     if (musicGainNode) {
-        musicGainNode.gain.value = parseFloat(value);
+        const vol = Math.min(Math.max(parseFloat(value ?? DEFAULT_VOLUME) || DEFAULT_VOLUME, 0), 1);
+        musicGainNode.gain.value = vol;
+        if (volumeSlider && volumeSlider.value !== String(vol)) {
+            volumeSlider.value = vol;
+        }
     }
 }
 
@@ -240,12 +264,14 @@ async function startGame() {
     energy = maxEnergy;
     regenDelay = 0;
     elapsedTime = 0;
+    lastFrameTime = 0;
     spawnedWaves.clear();
     canvas.style.cursor = "none"
 
     for (let i = 0; i < upgrades.particles; i++) createParticle();
     musicPausedTime = 0;
     isPaused = false;
+    await ensureMusicReady();
     playMusic();
     gameStarted = true;
 
@@ -299,8 +325,7 @@ function endGame(won = false) {
     let result = document.getElementById("result");
 
     restartBtn.style.display = "inline-block"; // Show restart button
-
-    let resultText = `${won ? "🎉 You survived until the end! You win!" : "💀 Game Over"}<br>`;
+    let resultText = `${won ? "🎉 You survived until the end! You win!<br>Did you notice background disappearing?" : "💀 Game Over"}<br>`;
 
     result.innerHTML = resultText;
     if (won && devtoolsOpen) {// Small surprise for people finished with dev tools open
@@ -431,7 +456,7 @@ function resumeGame() {
     canvas.style.cursor = "none";
     menu.style.display = "none";
     menu.classList.remove("d-flex")
-
+    lastFrameTime = 0; // avoid large jump after pause
     requestAnimationFrame(gameLoop);
 }
 
@@ -501,13 +526,18 @@ function updatePlayerPosition() {
 }
 let musicTitle = "Eslxst - ...see you to_no_more";
 let musicTitleAlpha = 1; // start fully visible
-let musicTitleFadeSpeed = 0.002; // fade per frame
+let musicTitleFadeSpeed = 0.002; // fade per frame (scaled by delta)
 let lastRegenTime = 0;
+let lastFrameTime = 0;
 // ====== GAME LOOP ======
-function gameLoop() {
+function gameLoop(timestamp) {
     if (paused || gameOver) {
         return; // completely freeze game
     }
+    if (!lastFrameTime) lastFrameTime = timestamp;
+    const deltaMs = Math.min(timestamp - lastFrameTime, 100);
+    const frameDelta = (deltaMs / 16.6667) * timeScale; // normalized to 60 fps, scaled for pacing tweaks
+    lastFrameTime = timestamp;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.save();
     ctx.translate(offsetX, offsetY);
@@ -519,7 +549,7 @@ function gameLoop() {
         ctx.fillText(`🎵 Playing: ${musicTitle}`, GAME_WIDTH - 10, 20);
         ctx.textAlign = "left";
         if (musicTitleAlpha > 0.25) {
-            musicTitleAlpha -= musicTitleFadeSpeed; // slowly fade
+            musicTitleAlpha -= musicTitleFadeSpeed * frameDelta; // slowly fade
         }
     }
     updatePlayerPosition();
@@ -551,10 +581,10 @@ function gameLoop() {
         currentOpacity
     );
     if (boostActive) {
-        energy -= 0.02;
+        energy -= 0.02 * frameDelta;
         if (energy <= 0) { energy = 0; boostActive = false; }
     } else if (energy < maxEnergy) {
-        energy += 0.01;
+        energy += 0.01 * frameDelta;
     }
     energyBar.style.width = `${(energy / maxEnergy) * 100}%`;
     drawUpgradeCards(regenDelay);
@@ -659,12 +689,12 @@ function gameLoop() {
         if (!p.alive) return;
         // Target scale based on input
         let targetScale = (mouseDown && energy > 0) ? 1.5 : 1; // 1.5x = 50% bigger orbit
-        particleRadiusScale += (targetScale - particleRadiusScale) * 0.01; // smooth transition
+        particleRadiusScale += (targetScale - particleRadiusScale) * 0.01 * frameDelta; // smooth transition
 
         let speedFactor = boostActive ? upgrades.speed * 5 : upgrades.speed;
-        p.angle += p.speed * speedFactor;
+        p.angle += p.speed * speedFactor * frameDelta;
         if (mouseDown && energy > 0) {
-            energy -= 0.001; // drain while boosting per particle
+            energy -= 0.001 * frameDelta; // drain while boosting per particle
         }
         const scaledRadius = p.radius * particleRadiusScale;
         const x = player.x + scaledRadius * Math.cos(p.angle);
@@ -682,7 +712,7 @@ function gameLoop() {
         if (e.type === "aura" && e.auraRadius > 0) {
             const distToPlayer = Math.hypot(e.x - player.x, e.y - player.y);
             if (distToPlayer < e.auraRadius) {
-                energy = Math.max(0, energy - 0.035); // drain
+                energy = Math.max(0, energy - 0.035 * frameDelta); // drain
             }
             // Draw aura circle
             ctx.beginPath();
@@ -692,30 +722,31 @@ function gameLoop() {
             ctx.stroke();
         } else if (e.type === "homing") {
             const dx = player.x - e.x, dy = player.y - e.y, dist = Math.hypot(dx, dy);
-            e.x += (dx / dist) * e.speed; e.y += (dy / dist) * e.speed;
+            e.x += (dx / dist) * e.speed * frameDelta;
+            e.y += (dy / dist) * e.speed * frameDelta;
             if (dist < e.size) endGame();
 
         } else if (e.type === "wander") {
-            e.x += e.dx; e.y += e.dy;
+            e.x += e.dx * frameDelta * 2; e.y += e.dy * frameDelta * 2;//2x speed for wanderers
             if (e.x < 0 || e.x > GAME_WIDTH) e.dx *= -1;
             if (e.y < 0 || e.y > GAME_HEIGHT) e.dy *= -1;
             if (Math.hypot(e.x - player.x, e.y - player.y) < e.size) endGame();
 
         } else if (e.type === "bouncer") {
-            e.x += e.dx * e.speed; e.y += e.dy * e.speed;
+            e.x += e.dx * e.speed * frameDelta; e.y += e.dy * e.speed * frameDelta;
             if (e.x <= 0 || e.x >= GAME_WIDTH) e.dx *= -1;
             if (e.y <= 0 || e.y >= GAME_HEIGHT) e.dy *= -1;
             if (Math.hypot(e.x - player.x, e.y - player.y) < e.size) endGame();
 
         } else if (e.type === "shooter") {
-            if (Math.random() < 0.01) {
+            if (Math.random() < 0.01 * frameDelta) {
                 const dx = player.x - e.x, dy = player.y - e.y, dist = Math.hypot(dx, dy);
                 projectiles.push({ x: e.x, y: e.y, dx: dx / dist, dy: dy / dist, speed: 3 });
             }
-        } else if (e.type === "orbiter") {
-            e.angle += 0.02;
-            e.x += Math.cos(e.angle) * e.speed;
-            e.y += Math.sin(e.angle) * e.speed;
+        } else if (e.type === "orbiter") {// This enemy didn't work, so I use it as a fake enemy
+            e.angle += 0.02 * frameDelta;
+            e.x += Math.cos(e.angle) * e.speed * frameDelta;
+            e.y += Math.sin(e.angle) * e.speed * frameDelta;
 
         } else if (e.type === "charger") {
             const dashLength = e.dashLength ?? 300; // How far to dash
@@ -765,8 +796,8 @@ function gameLoop() {
                 }
                 return; // Stop here so no other drawing overwrites it
             } else if (e.state === "dashing") {
-                e.x += e.dx;
-                e.y += e.dy;
+                e.x += e.dx * frameDelta;
+                e.y += e.dy * frameDelta;
 
                 const traveled = Math.hypot(e.x - e.dashStartX, e.y - e.dashStartY);
                 if (traveled >= dashLength) {
@@ -786,8 +817,8 @@ function gameLoop() {
             if (dist < e.size) endGame();
         } else if (e.type === "shielded") {
             // Move like a wanderer
-            e.x += e.dx;
-            e.y += e.dy;
+            e.x += e.dx * frameDelta;
+            e.y += e.dy * frameDelta;
             if (e.x < 0 || e.x > GAME_WIDTH) e.dx *= -1;
             if (e.y < 0 || e.y > GAME_HEIGHT) e.dy *= -1;
 
@@ -837,8 +868,8 @@ function gameLoop() {
 
     // Projectiles
     projectiles.forEach((p, pi) => {
-        p.x += p.dx * p.speed;
-        p.y += p.dy * p.speed;
+        p.x += p.dx * p.speed * frameDelta;
+        p.y += p.dy * p.speed * frameDelta;
         ctx.beginPath();
         ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
         ctx.fillStyle = "yellow";
