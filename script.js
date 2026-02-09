@@ -45,10 +45,9 @@ let spawnedWaves = new Set();
 import { waveSchedule } from "./level_design.js"
 
 document.addEventListener('DOMContentLoaded', async function () {
-    if (!volumeSlider.value) volumeSlider.value = DEFAULT_VOLUME;
+    if (volumeSlider.value == null) volumeSlider.value = DEFAULT_VOLUME;
     await ensureMusicReady();
 })
-
 
 // ====== UI ELEMENTS ======
 const menu = document.getElementById("menu");
@@ -92,7 +91,6 @@ document.addEventListener("mousemove", e => {
 volumeSlider.addEventListener("input", () => {
     setMusicVolume(volumeSlider.value);
 });
-
 
 let upgradeCosts = { particles: 20, speed: 15, regen: 50 };
 const maxParticles = 30;
@@ -179,7 +177,7 @@ async function preloadMusic(url) {
     const arrayBuffer = await response.arrayBuffer();
     musicBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
-    musicGainNode.gain.value = parseFloat(volumeSlider?.value || DEFAULT_VOLUME);
+    musicGainNode.gain.value = parseFloat(volumeSlider?.value ?? DEFAULT_VOLUME);
     musicDuration = musicBuffer.duration;
 }
 async function ensureMusicReady() {
@@ -192,7 +190,7 @@ async function ensureMusicReady() {
     if (audioContext?.state === "suspended") {
         try { await audioContext.resume(); } catch (err) { console.warn("AudioContext resume failed", err); }
     }
-    setMusicVolume(volumeSlider?.value || DEFAULT_VOLUME);
+    setMusicVolume(volumeSlider?.value ?? DEFAULT_VOLUME);
 }
 
 function playMusic() {
@@ -234,7 +232,7 @@ function resumeMusic() {
 
 function setMusicVolume(value) {
     if (musicGainNode) {
-        const vol = Math.min(Math.max(parseFloat(value ?? DEFAULT_VOLUME) || DEFAULT_VOLUME, 0), 1);
+        const vol = Math.min(Math.max(parseFloat(value ?? DEFAULT_VOLUME) ?? DEFAULT_VOLUME, 0), 1);
         musicGainNode.gain.value = vol;
         if (volumeSlider && volumeSlider.value !== String(vol)) {
             volumeSlider.value = vol;
@@ -248,10 +246,12 @@ function getMusicTime() {
         : audioContext.currentTime - musicStartTime;
 }
 
-
 async function startGame() {
     gameOver = false; // make sure loop can run again
     musicTitleAlpha = 1; // reset music title fade-in
+    musicEnded = false;
+    boostActive = false;
+    mouseDown = false;
 
     // reset all other stats
     score = 0;
@@ -263,6 +263,7 @@ async function startGame() {
     upgradeCosts = { particles: 20, speed: 15, regen: 50 };
     energy = maxEnergy;
     regenDelay = 0;
+    lastRegenTime = 0;
     elapsedTime = 0;
     lastFrameTime = 0;
     spawnedWaves.clear();
@@ -287,7 +288,8 @@ restartBtn.onclick = () => {
     gameOver = false;
     paused = false;
     elapsedTime = 0;
-    regenTimer = 0;
+    regenDelay = 0;
+    lastRegenTime = 0;
     spawnedWaves.clear();
     enemies = [];
     particles = [];
@@ -340,18 +342,11 @@ function endGame(won = false) {
     endMsg.style.display = "block";
 }
 
-// Restart logic
-restartBtn.onclick = () => {
-    document.getElementById("endMessage").style.display = "none";
-    restartBtn.style.display = "none";
-    startGame();
-};
 function drawGameBounds() {
     ctx.strokeStyle = "rgba(255, 255, 255, 0.15)"; // faint white
     ctx.lineWidth = 2;
     ctx.strokeRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 }
-
 
 // ====== Game Functions ======
 function createParticle() {
@@ -407,16 +402,81 @@ function drawUpgradeCards(regenDelay) {
     });
 }
 
+// ====== SAFE EXPRESSION EVALUATOR ======
+// Safely evaluates math expressions with player.x and player.y references
+function evaluateExpression(expr, playerPos) {
+    let s = expr
+        .replace(/player\.x/g, String(playerPos.x))
+        .replace(/player\.y/g, String(playerPos.y))
+        .replace(/\s+/g, '');
+
+    if (!/^[0-9+\-*/().]+$/.test(s)) return null;
+
+    try {
+        return evalSimpleMath(s);
+    } catch {
+        return null;
+    }
+}
+
+function evalSimpleMath(s) {
+    const values = [];
+    const ops = [];
+
+    const prec = op => (op === '+' || op === '-') ? 1 : 2;
+
+    const apply = () => {
+        const b = values.pop();
+        const a = values.pop();
+        const op = ops.pop();
+
+        if (op === '+') values.push(a + b);
+        else if (op === '-') values.push(a - b);
+        else if (op === '*') values.push(a * b);
+        else if (op === '/') values.push(a / b);
+    };
+
+    let i = 0;
+
+    while (i < s.length) {
+        if (s[i] === '(') {
+            ops.push('(');
+            i++;
+        } else if (s[i] === ')') {
+            while (ops.length && ops[ops.length - 1] !== '(') apply();
+            ops.pop();
+            i++;
+        } else if ('+-*/'.includes(s[i])) {
+            const op = s[i];
+            while (ops.length && ops[ops.length - 1] !== '(' &&
+                prec(ops[ops.length - 1]) >= prec(op)) {
+                apply();
+            }
+            ops.push(op);
+            i++;
+        } else {
+            let j = i;
+            while (j < s.length && /[0-9.]/.test(s[j])) j++;
+            values.push(parseFloat(s.slice(i, j)));
+            i = j;
+        }
+    }
+
+    while (ops.length) apply();
+
+    return values[0];
+}
+
 // ====== ENEMY SPAWN ======
 function spawnEnemy(config) {
     const safeDistance = 100; // prevent spawning too close to player
 
     let spawnX = typeof config.x === "string"
-        ? eval(config.x.replace(/player\.x/g, player.x).replace(/player\.y/g, player.y))
+        ? (evaluateExpression(config.x, { x: player.x, y: player.y }) ?? Math.random() * GAME_WIDTH)
         : config.x ?? Math.random() * GAME_WIDTH;
 
     let spawnY = typeof config.y === "string"
-        ? eval(config.y.replace(/player\.x/g, player.x).replace(/player\.y/g, player.y))
+        ? (evaluateExpression(config.y, { x: player.x, y: player.y }) ?? Math.random() * GAME_HEIGHT)
         : config.y ?? Math.random() * GAME_HEIGHT;
 
     while (Math.hypot(spawnX - player.x, spawnY - player.y) < safeDistance) {
